@@ -23,7 +23,7 @@ request.Test.prototype.expectJSON = function(json, done) {
 request.Test.prototype.expectNoHeader = function(header, done) {
   this.expect(function(res) {
     if (header.toLowerCase() in res.headers) {
-      return 'Unexpected header in response: ' + header;
+      return new Error('Unexpected header in response: ' + header);
     }
   });
   return done ? this.end(done) : this;
@@ -118,6 +118,31 @@ describe('Basic functionality', function() {
       .expect('Access-Control-Allow-Origin', '*')
       .expect(200, helpText, done);
   });
+
+  it('GET /http://:1234', function(done) {
+    // 'http://:1234' is an invalid URL.
+    request(cors_anywhere)
+      .get('/http://:1234')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect(200, helpText, done);
+  });
+
+  it('GET /http:///', function(done) {
+    // 'http://:1234' is an invalid URL.
+    request(cors_anywhere)
+      .get('/http:///')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect(200, helpText, done);
+  });
+
+  it('GET /http:/notenoughslashes', function(done) {
+    // 'http:/notenoughslashes' is an invalid URL.
+    request(cors_anywhere)
+      .get('/http:/notenoughslashes')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect(200, helpText, done);
+  });
+
 
   it('GET ///example.com', function(done) {
     // API base URL (with trailing slash) + '//example.com'
@@ -219,6 +244,19 @@ describe('Basic functionality', function() {
       .expect('x-final-url', 'http://example.com/redirectwithoutlocation')
       .expect('access-control-expose-headers', /x-final-url/)
       .expect(302, 'maybe found', done);
+  });
+
+  it('GET with 302 redirect to an invalid Location should not be followed', function(done) {
+    // There is nothing to follow, so let the browser decide what to do with it.
+    request(cors_anywhere)
+      .get('/example.com/redirectinvalidlocation')
+      .redirects(0)
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect('x-request-url', 'http://example.com/redirectinvalidlocation')
+      .expect('x-final-url', 'http://example.com/redirectinvalidlocation')
+      .expect('access-control-expose-headers', /x-final-url/)
+      .expect('Location', 'http:///')
+      .expect(302, 'redirecting to junk...', done);
   });
 
   it('POST with 307 redirect should not be handled', function(done) {
@@ -385,10 +423,18 @@ describe('Proxy errors', function() {
   });
 
   it('Content-Length mismatch', function(done) {
+    var errorMessage = 'Error: Parse Error: Invalid character in Content-Length';
+    // <13.0.0: https://github.com/nodejs/node/commit/ba565a37349e81c9d2402b0c8ef05ab39dca8968
+    // <12.7.0: https://github.com/nodejs/node/pull/28817
+    var nodev = process.versions.node.split('.').map(function(v) { return parseInt(v); });
+    if (nodev[0] < 12 ||
+        nodev[0] === 12 && nodev[1] < 7) {
+      errorMessage = 'Error: Parse Error';
+    }
     request(cors_anywhere)
       .get('/' + bad_http_server_url)
       .expect('Access-Control-Allow-Origin', '*')
-      .expect(404, 'Not found because of proxy error: Error: Parse Error', done);
+      .expect(404, 'Not found because of proxy error: ' + errorMessage, done);
   });
 
   it('Invalid HTTP status code', function(done) {
@@ -888,20 +934,36 @@ describe('Access-Control-Max-Age set', function() {
   });
   after(stopServer);
 
-  it('GET /', function(done) {
+  it('OPTIONS /', function(done) {
+    request(cors_anywhere)
+      .options('/')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect('Access-Control-Max-Age', '600')
+      .expect(200, '', done);
+  });
+
+  it('OPTIONS /example.com', function(done) {
+    request(cors_anywhere)
+      .options('/example.com')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expect('Access-Control-Max-Age', '600')
+      .expect(200, '', done);
+  });
+
+  it('GET / no Access-Control-Max-Age on GET', function(done) {
     request(cors_anywhere)
       .get('/')
       .type('text/plain')
       .expect('Access-Control-Allow-Origin', '*')
-      .expect('Access-Control-Max-Age', '600')
+      .expectNoHeader('Access-Control-Max-Age')
       .expect(200, helpText, done);
   });
 
-  it('GET /example.com', function(done) {
+  it('GET /example.com no Access-Control-Max-Age on GET', function(done) {
     request(cors_anywhere)
       .get('/example.com')
       .expect('Access-Control-Allow-Origin', '*')
-      .expect('Access-Control-Max-Age', '600')
+      .expectNoHeader('Access-Control-Max-Age')
       .expect(200, 'Response from example.com', done);
   });
 });
@@ -912,6 +974,22 @@ describe('Access-Control-Max-Age not set', function() {
     cors_anywhere_port = cors_anywhere.listen(0).address().port;
   });
   after(stopServer);
+
+  it('OPTIONS / corsMaxAge disabled', function(done) {
+    request(cors_anywhere)
+      .options('/')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expectNoHeader('Access-Control-Max-Age')
+      .expect(200, '', done);
+  });
+
+  it('OPTIONS /example.com corsMaxAge disabled', function(done) {
+    request(cors_anywhere)
+      .options('/example.com')
+      .expect('Access-Control-Allow-Origin', '*')
+      .expectNoHeader('Access-Control-Max-Age')
+      .expect(200, '', done);
+  });
 
   it('GET /', function(done) {
     request(cors_anywhere)
